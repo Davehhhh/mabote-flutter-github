@@ -45,7 +45,7 @@ if ($period === 'monthly') {
       FROM users u
       LEFT JOIN wallet w ON u.user_id = w.user_id
       LEFT JOIN transactions t ON u.user_id = t.user_id AND t.transaction_date >= DATE_SUB(NOW(), INTERVAL 1 MONTH)
-      WHERE u.is_active = 1 
+      WHERE (u.is_active = 1 AND u.is_active IS NOT NULL)
         AND t.transaction_id IS NOT NULL
       GROUP BY u.user_id, u.first_name, u.last_name, u.email, u.total_points, w.current_balance
       ORDER BY COALESCE(SUM(t.points_earned), 0) DESC, COUNT(DISTINCT t.transaction_id) DESC
@@ -66,7 +66,7 @@ if ($period === 'monthly') {
       FROM users u
       LEFT JOIN wallet w ON u.user_id = w.user_id
       LEFT JOIN transactions t ON u.user_id = t.user_id
-      WHERE u.is_active = 1
+      WHERE (u.is_active = 1 AND u.is_active IS NOT NULL)
       GROUP BY u.user_id, u.first_name, u.last_name, u.email, u.total_points, w.current_balance
       ORDER BY u.total_points DESC
       LIMIT 50

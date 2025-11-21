@@ -19,6 +19,7 @@ class _RewardsScreenState extends State<RewardsScreen> {
   List<Map<String, dynamic>> _rewards = [];
   bool _isLoading = true;
   bool _isClaiming = false;
+  String? _errorMessage;
   Timer? _refreshTimer;
   final NotificationService _notificationService = NotificationService();
 
@@ -47,21 +48,40 @@ class _RewardsScreenState extends State<RewardsScreen> {
     try {
       const base = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://192.168.254.128/mabote_api');
       final url = Uri.parse('$base/list_rewards.php');
-      final res = await http.get(url);
+      
+      final res = await http.get(url).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw Exception('Connection timeout. Please check your internet connection.');
+        },
+      );
+      
+      // Check if response is valid JSON
+      if (res.headers['content-type']?.contains('application/json') != true) {
+        throw Exception('Invalid response format. Server returned: ${res.body.substring(0, 100)}');
+      }
+      
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       
       if (res.statusCode == 200 && data['success'] == true) {
         setState(() {
           _rewards = (data['rewards'] as List).cast<Map<String, dynamic>>();
           _isLoading = false;
+          _errorMessage = null;
         });
       } else {
-        throw Exception(data['message'] ?? 'Failed to fetch rewards');
+        throw Exception(data['message'] ?? 'Failed to fetch rewards. Status: ${res.statusCode}');
       }
     } catch (e) {
       setState(() {
         _isLoading = false;
+        _errorMessage = e.toString().replaceAll('Exception: ', '');
       });
+      
+      // Only show error snackbar on manual refresh, not on auto-refresh
+      if (mounted) {
+        debugPrint('Error fetching rewards: $e');
+      }
     }
   }
 
@@ -73,17 +93,86 @@ class _RewardsScreenState extends State<RewardsScreen> {
         onRefresh: _fetchRewards,
         child: _isLoading
             ? const Center(child: CircularProgressIndicator())
-            : _rewards.isEmpty
-                ? const Center(child: Text('No rewards available'))
-                : ListView.separated(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _rewards.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (context, i) {
-                      final r = _rewards[i];
-                      return _buildRewardCard(r);
-                    },
-                  ),
+            : _errorMessage != null
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.error_outline,
+                            size: 64,
+                            color: Colors.red.shade300,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Error Loading Rewards',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey.shade700,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _errorMessage!,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          ElevatedButton.icon(
+                            onPressed: _fetchRewards,
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Retry'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : _rewards.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.card_giftcard_outlined,
+                              size: 64,
+                              color: Colors.grey.shade400,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'No rewards available',
+                              style: TextStyle(
+                                fontSize: 18,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Check back later for new rewards!',
+                              style: TextStyle(
+                                color: Colors.grey.shade500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.separated(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _rewards.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 12),
+                        itemBuilder: (context, i) {
+                          final r = _rewards[i];
+                          return _buildRewardCard(r);
+                        },
+                      ),
       ),
     );
   }
@@ -215,12 +304,19 @@ class _RewardsScreenState extends State<RewardsScreen> {
       const base = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://192.168.254.128/mabote_api');
       final url = Uri.parse('$base/claim_reward.php');
       
+      // Get points_required from reward data
+      final pointsRequired = reward['points_required'] ?? 0;
+      if (pointsRequired <= 0) {
+        throw Exception('Invalid reward: points required is missing or zero');
+      }
+      
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'user_id': uid,
           'reward_id': reward['reward_id'],
+          'points_required': pointsRequired,
         }),
       );
 
